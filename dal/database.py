@@ -42,7 +42,9 @@ class Database:
                 CREATE TABLE IF NOT EXISTS {self.table} (
                     id INT AUTO_INCREMENT PRIMARY KEY,
                     name VARCHAR(100) NOT NULL,
-                    age INT
+                    recurring_amount FLOAT,
+                    invested_amount FLOAT,
+                    total__amount FLOAT
                 )
             """)
             self.connection.commit()
