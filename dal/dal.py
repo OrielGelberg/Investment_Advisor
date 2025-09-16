@@ -1,12 +1,13 @@
 import mysql.connector
 from mysql.connector import Error
+import config
 
-class Database:
-    def __init__(self, host, user, database, table):
-        self.host = host
-        self.user = user
-        self.database = database
-        self.table = table
+class Dal:
+    def __init__(self):
+        self.host = config.host
+        self.user = config.user
+        self.database = config.database
+        self.table = config.table
         self.connection = None
         self.cursor = None
 
@@ -42,9 +43,10 @@ class Database:
                 CREATE TABLE IF NOT EXISTS {self.table} (
                     id INT AUTO_INCREMENT PRIMARY KEY,
                     name VARCHAR(100) NOT NULL,
+                    password VARCHAR(100),
                     recurring_amount FLOAT,
                     invested_amount FLOAT,
-                    total__amount FLOAT
+                    total_amount FLOAT
                 )
             """)
             self.connection.commit()
@@ -55,3 +57,14 @@ class Database:
         if self.connection and self.connection.is_connected():
             self.cursor.close()
             self.connection.close()
+
+    def create_user(self, name, password, amount):
+        try:
+            sql = "INSERT INTO users (name, password, recurring_amount, invested_amount, total_amount) VALUES (%s, %s, %s, 0, %s)"
+            self.cursor.execute(sql, (name, password, amount, amount))
+            self.connection.commit()
+            print(f"Inserted user {name}")
+        except Error as e:
+            print(f"Error: {e}")
+
+
