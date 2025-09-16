@@ -1,4 +1,3 @@
-// components/forms/AuthForm.jsx
 import Input from "./Input";
 import Button from "./Button";
 
