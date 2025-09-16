@@ -23,3 +23,6 @@ dist-ssr
 *.sln
 *.sw?
 
+#server pkg & files
+backend/node_modules
+backend/.env
