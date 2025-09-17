@@ -1,6 +1,10 @@
+import Header from "../components/Header";
+import Footer from "../components/Footer";
 
+const defaultHeader = Header;
+const defaultFooter = Footer
 
-export default function AppLayout({ header, footer, mainContent }) {
+export default function AppLayout({ header=defaultHeader, footer=defaultFooter, mainContent }) {
     return (
         <div className="min-h-screen flex flex-col bg-gray-50">
             <header>

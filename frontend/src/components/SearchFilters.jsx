@@ -9,7 +9,7 @@ export default function SearchFilters({ filters, onChange,getResult }) {
         <label className="block mb-1">סוג השקעה</label>
         <select
           name="investmentType"
-          value={filters.investmentType || ""}
+          value={filters.investment || "filters"}
           onChange={(e) => onChange(e.target.name, e.target.value)}
           className="w-full border rounded-lg px-3 py-2"
         >
@@ -25,7 +25,7 @@ export default function SearchFilters({ filters, onChange,getResult }) {
         type="number"
         name="amount"
         placeholder="כמה תרצה להשקיע?"
-        value={filters.amount || ""}
+        value={filters.amount || "filters"}
         onChange={(e) => onChange(e.target.name, e.target.value)}
       />
 
@@ -34,7 +34,7 @@ export default function SearchFilters({ filters, onChange,getResult }) {
         <label className="block mb-1">משך זמן</label>
         <select
           name="duration"
-          value={filters.duration || ""}
+          value={filters.duration || "filters"}
           onChange={(e) => onChange(e.target.name, e.target.value)}
           className="w-full border rounded-lg px-3 py-2"
         >
@@ -46,7 +46,7 @@ export default function SearchFilters({ filters, onChange,getResult }) {
         </select>
       </div>
 
-      <Button type="submit" name="חפש" onClick={getResult}/>
+      <Button type="submit" name="חפש" onClick={()=> getResult(filters)}/>
     </div>
   );
 }
