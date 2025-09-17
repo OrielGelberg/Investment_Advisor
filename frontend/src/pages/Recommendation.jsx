@@ -1,13 +1,13 @@
 import { useState } from "react";
 import AppLayout from "../layouts/AppLayout";
 import SearchFilters from "../components/SearchFilters";
-import { searchInvestments } from "../services/recommendationService"
-import { ResultContainer } from "../components/ResultContainer";
+import { searchInvestments } from "../services/investmentService"
+import { ResultsContainer } from "../components/ResultContainer";
 
 
 export default function SearchPage() {
   const [filters, setFilters] = useState({
-    sum: "",
+    sum: null,
     type: "",
     duration: ""
   });
@@ -18,8 +18,8 @@ export default function SearchPage() {
     setFilters({ ...filters, [name]: value });
   };
 
-  const handleSearch = (filters) => {
-    const recommendations = searchInvestments(filters)
+  const handleSearch = async (filters) => {
+    const recommendations = await searchInvestments(filters)
     setResults(
       recommendations
       // [{ id: 1, title: "השקעה 1", description: "תיאור קצר" },
@@ -31,7 +31,7 @@ export default function SearchPage() {
     <AppLayout mainContent={
       <>
         <SearchFilters filters={filters} onChange={handleFilterChange} getResult={handleSearch} />
-        <ResultContainer results={results} />
+        <ResultsContainer results={results} />
       </>
     } />
   );
