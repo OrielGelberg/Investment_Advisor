@@ -1,0 +1,195 @@
+class StockRecommendationAPI:
+    """Flask API Server למערכת ההמלצות"""
+    
+    def __init__(self, stock_system):
+        self.app = Flask(__name__)
+        CORS(self.app)  # מאפשר גישה מ-JavaScript
+        self.stock_system = stock_system
+        self.setup_routes()
+    
+    def setup_routes(self):
+        """הגדרת נתיבי API"""
+        
+        @self.app.route('/api/health', methods=['GET'])
+        def health_check():
+            """בדיקת תקינות השרת"""
+            return jsonify({
+                'status': 'healthy',
+                'message': 'Stock Recommendation API is running',
+                'timestamp': datetime.now().isoformat()
+            })
+        
+        @self.app.route('/api/recommendations/long-term', methods=['POST'])
+        def get_long_term_recommendations():
+            """קבלת המלצות לטווח ארוך"""
+            try:
+                data = request.get_json()
+                
+                if not data or 'investmentAmount' not in data:
+                    return jsonify({
+                        'success': False,
+                        'error': 'Investment amount is required'
+                    }), 400
+                
+                investment_amount = float(data['investmentAmount'])
+                
+                if investment_amount <= 0:
+                    return jsonify({
+                        'success': False,
+                        'error': 'Investment amount must be positive'
+                    }), 400
+                
+                result = self.stock_system.get_long_term_api(investment_amount)
+                return jsonify(result)
+                
+            except ValueError:
+                return jsonify({
+                    'success': False,
+                    'error': 'Invalid investment amount format'
+                }), 400
+            except Exception as e:
+                return jsonify({
+                    'success': False,
+                    'error': f'Server error: {str(e)}'
+                }), 500
+        
+        @self.app.route('/api/recommendations/medium-term', methods=['GET'])
+        def get_medium_term_recommendations():
+            """קבלת סיגנלי מסחר לטווח בינוני"""
+            try:
+                result = self.stock_system.get_medium_term_api()
+                return jsonify(result)
+                
+            except Exception as e:
+                return jsonify({
+                    'success': False,
+                    'error': f'Server error: {str(e)}'
+                }), 500
+        
+        @self.app.route('/api/portfolio/history', methods=['GET'])
+        def get_portfolio_history():
+            """קבלת היסטוריית פורטפוליו"""
+            try:
+                days = request.args.get('days', 30, type=int)
+                
+                if days <= 0 or days > 365:
+                    return jsonify({
+                        'success': False,
+                        'error': 'Days must be between 1 and 365'
+                    }), 400
+                
+                result = self.stock_system.get_portfolio_history_api(days)
+                return jsonify(result)
+                
+            except Exception as e:
+                return jsonify({
+                    'success': False,
+                    'error': f'Server error: {str(e)}'
+                }), 500
+        
+        @self.app.route('/api/stock/<symbol>', methods=['GET'])
+        def get_stock_info(symbol):
+            """קבלת מידע על מניה ספציפית"""
+            try:
+                ticker = yf.Ticker(symbol.upper())
+                info = ticker.info
+                hist = ticker.history(period='1d')
+                
+                if hist.empty:
+                    return jsonify({
+                        'success': False,
+                        'error': 'Stock symbol not found'
+                    }), 404
+                
+                current_price = hist['Close'].iloc[-1] if not hist.empty else info.get('regularMarketPrice', 0)
+                
+                stock_data = {
+                    'symbol': symbol.upper(),
+                    'companyName': info.get('longName', 'N/A'),
+                    'currentPrice': round(current_price, 2),
+                    'currency': info.get('currency', 'USD'),
+                    'marketCap': info.get('marketCap', 0),
+                    'peRatio': info.get('trailingPE', 0),
+                    'dividendYield': info.get('dividendYield', 0),
+                    'volume': info.get('volume', 0),
+                    'dayHigh': round(hist['High'].iloc[-1], 2) if not hist.empty else 0,
+                    'dayLow': round(hist['Low'].iloc[-1], 2) if not hist.empty else 0
+                }
+                
+                return jsonify({
+                    'success': True,
+                    'data': stock_data
+                })
+                
+            except Exception as e:
+                return jsonify({
+                    'success': False,
+                    'error': f'Error fetching stock data: {str(e)}'
+                }), 500
+        
+        @self.app.route('/api/recommendations/combined', methods=['POST'])
+        def get_combined_recommendations():
+            """קבלת המלצות משולבות - לטווח ארוך ובינוני"""
+            try:
+                data = request.get_json()
+                
+                if not data or 'investmentAmount' not in data:
+                    return jsonify({
+                        'success': False,
+                        'error': 'Investment amount is required'
+                    }), 400
+                
+                investment_amount = float(data['investmentAmount'])
+                
+                if investment_amount <= 0:
+                    return jsonify({
+                        'success': False,
+                        'error': 'Investment amount must be positive'
+                    }), 400
+                
+                # קבלת המלצות לטווח ארוך
+                long_term_result = self.stock_system.get_long_term_api(investment_amount)
+                
+                # קבלת סיגנלי מסחר לטווח בינוני
+                medium_term_result = self.stock_system.get_medium_term_api()
+                
+                return jsonify({
+                    'success': True,
+                    'data': {
+                        'longTerm': long_term_result['data'],
+                        'mediumTerm': medium_term_result['data'],
+                        'timestamp': datetime.now().isoformat()
+                    }
+                })
+                
+            except ValueError:
+                return jsonify({
+                    'success': False,
+                    'error': 'Invalid investment amount format'
+                }), 400
+            except Exception as e:
+                return jsonify({
+                    'success': False,
+                    'error': f'Server error: {str(e)}'
+                }), 500
+    
+    def run(self, host='localhost', port=5000, debug=False):
+        """הפעלת השרת"""
+        print(f"🌐 Flask API Server מתחיל על http://{host}:{port}")
+        print("📋 נתיבי API זמינים:")
+        print("   GET  /api/health - בדיקת תקינות")
+        print("   POST /api/recommendations/long-term - המלצות לטווח ארוך")
+        print("   GET  /api/recommendations/medium-term - סיגנלי מסחר")
+        print("   GET  /api/portfolio/history?days=30 - היסטוריית פורטפוליו")
+        print("   GET  /api/stock/<symbol> - מידע על מניה")
+        print("   POST /api/recommendations/combined - המלצות משולבות")
+        print("="*60)
+        
+        self.app.run(host=host, port=port, debug=debug)
+
+
+def run_api_server(stock_system, host='localhost', port=5000):
+    """הפעלת שרת API במקביל"""
+    api = StockRecommendationAPI(stock_system)
+    api.run(host=host, port=port, debug=False)
+
