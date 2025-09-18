@@ -2,7 +2,7 @@ import { useState } from "react";
 import AppLayout from "../layouts/AppLayout";
 import SearchFilters from "../components/SearchFilters";
 import { searchInvestments } from "../services/investmentService"
-import { ResultsContainer } from "../components/ResultContainer";
+import ResultsContainer from "../components/ResultContainer";
 
 
 export default function SearchPage() {
