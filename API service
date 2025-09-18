@@ -1,3 +1,7 @@
+from flask import Flask, jsonify, request
+from flask_cors import CORS
+import threading
+
 class StockRecommendationAPI:
     """Flask API Server למערכת ההמלצות"""
     
