@@ -1,0 +1,559 @@
+"""
+מערכת המלצות השקעות עם נתונים אמיתיים
+Stock Recommendation System with Real Data
+
+מטרת התוכנית:
+1. המלצות השקעה לטווח ארוך - תיקי השקעות עם קרנות SP500 ו-NASDAQ
+2. המלצות מסחר לטווח בינוני - נקודות כניסה ויציאה על בסיס תמיכה והתנגדות
+3. שמירת נתונים במסד נתונים MySQL
+4. הרצה מקומית עם תוצאות בטרמינל
+
+דרישות התקנה:
+pip install yfinance pandas numpy mysql-connector-python tabulate
+
+"""
+
+import yfinance as yf
+import pandas as pd
+import numpy as np
+import mysql.connector
+from datetime import datetime, timedelta
+from tabulate import tabulate
+import warnings
+warnings.filterwarnings('ignore')
+
+# ספריות לשרת API
+from flask import Flask, jsonify, request
+from flask_cors import CORS
+import threading
+
+
+class StockRecommendationSystem:
+    """מערכת המלצות השקעות"""
+    
+    def __init__(self):
+        """אתחול המערכת"""
+        self.db_config = {
+            'host': 'localhost',
+            'user': 'root',
+            'password': 'your_password',  # יש לשנות את הסיסמה
+            'database': 'stock_recommendations'
+        }
+        self.setup_database()
+    
+    def setup_database(self):
+        """יצירת מסד נתונים וטבלאות"""
+        try:
+            # התחברות ללא מסד נתונים ספציפי
+            conn = mysql.connector.connect(
+                host=self.db_config['host'],
+                user=self.db_config['user'],
+                password=self.db_config['password']
+            )
+            cursor = conn.cursor()
+            
+            # יצירת מסד נתונים
+            cursor.execute("CREATE DATABASE IF NOT EXISTS stock_recommendations")
+            cursor.close()
+            conn.close()
+            
+            # התחברות למסד הנתונים החדש
+            conn = mysql.connector.connect(**self.db_config)
+            cursor = conn.cursor()
+            
+            # יצירת טבלת פורטפוליו לטווח ארוך
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS long_term_portfolio (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    date_created DATETIME,
+                    investment_amount DECIMAL(10,2),
+                    symbol VARCHAR(10),
+                    fund_name VARCHAR(100),
+                    current_price DECIMAL(10,2),
+                    recommended_shares INT,
+                    total_cost DECIMAL(10,2)
+                )
+            """)
+            
+            # יצירת טבלת סיגנלי מסחר לטווח בינוני
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS trading_signals (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    date_created DATETIME,
+                    symbol VARCHAR(10),
+                    current_price DECIMAL(10,2),
+                    support_level DECIMAL(10,2),
+                    resistance_level DECIMAL(10,2),
+                    signal_type VARCHAR(20),
+                    entry_point DECIMAL(10,2),
+                    exit_point DECIMAL(10,2),
+                    risk_reward_ratio DECIMAL(5,2)
+                )
+            """)
+            
+            cursor.close()
+            conn.close()
+            print("✅ מסד הנתונים הוקם בהצלחה")
+            
+        except mysql.connector.Error as e:
+            print(f"❌ שגיאה ביצירת מסד הנתונים: {e}")
+    
+    def get_long_term_recommendations(self, investment_amount):
+        """קבלת המלצות השקעה לטווח ארוך"""
+        print(f"\n📊 מחפש המלצות השקעה לטווח ארוך לסכום: ${investment_amount:,.2f}")
+        
+        # סמלי קרנות SP500 ו-NASDAQ
+        etf_symbols = {
+            'SPY': 'SPDR S&P 500 ETF Trust',
+            'VOO': 'Vanguard S&P 500 ETF',
+            'QQQ': 'Invesco QQQ Trust (NASDAQ-100)',
+            'VTI': 'Vanguard Total Stock Market ETF'
+        }
+        
+        recommendations = []
+        
+        for symbol, name in etf_symbols.items():
+            try:
+                # קבלת נתונים
+                ticker = yf.Ticker(symbol)
+                info = ticker.info
+                current_price = info.get('regularMarketPrice', info.get('previousClose', 0))
+                
+                if current_price == 0:
+                    continue
+                
+                # חישוב מספר יחידות מומלץ (25% מהתיק לכל קרן)
+                allocation = investment_amount * 0.25
+                recommended_shares = int(allocation // current_price)
+                total_cost = recommended_shares * current_price
+                
+                recommendations.append({
+                    'symbol': symbol,
+                    'name': name,
+                    'current_price': current_price,
+                    'recommended_shares': recommended_shares,
+                    'total_cost': total_cost
+                })
+                
+                # שמירה במסד הנתונים
+                self.save_long_term_recommendation(
+                    investment_amount, symbol, name, current_price, 
+                    recommended_shares, total_cost
+                )
+                
+            except Exception as e:
+                print(f"⚠️ שגיאה בקבלת נתונים עבור {symbol}: {e}")
+        
+        return recommendations
+    
+    def calculate_support_resistance(self, df, period=20):
+        """חישוב רמות תמיכה והתנגדות"""
+        # חישוב מינימום ומקסימום מתגלגל
+        df['rolling_min'] = df['Low'].rolling(window=period).min()
+        df['rolling_max'] = df['High'].rolling(window=period).max()
+        
+        # רמת תמיכה - ממוצע של המינימומים האחרונים
+        support = df['rolling_min'].iloc[-5:].mean()
+        
+        # רמת התנגדות - ממוצע של המקסימומים האחרונים
+        resistance = df['rolling_max'].iloc[-5:].mean()
+        
+        return support, resistance
+    
+    def generate_trading_signal(self, symbol, current_price, support, resistance):
+        """יצירת סיגנל מסחר"""
+        # חישוב יחס סיכון-תשואה
+        if resistance > current_price > support:
+            distance_to_support = current_price - support
+            distance_to_resistance = resistance - current_price
+            
+            if distance_to_support < distance_to_resistance * 0.3:
+                # קרוב לתמיכה - סיגנל קנייה
+                signal = "BUY"
+                entry_point = current_price
+                exit_point = resistance * 0.95  # יציאה קצת לפני ההתנגדות
+                risk_reward = distance_to_resistance / distance_to_support
+            elif distance_to_resistance < distance_to_support * 0.3:
+                # קרוב להתנגדות - סיגנל מכירה
+                signal = "SELL"
+                entry_point = current_price
+                exit_point = support * 1.05  # יציאה קצת אחרי התמיכה
+                risk_reward = distance_to_support / distance_to_resistance
+            else:
+                # באמצע - המתנה
+                signal = "HOLD"
+                entry_point = current_price
+                exit_point = current_price
+                risk_reward = 1.0
+        else:
+            signal = "HOLD"
+            entry_point = current_price
+            exit_point = current_price
+            risk_reward = 1.0
+        
+        return signal, entry_point, exit_point, risk_reward
+    
+    def get_medium_term_recommendations(self):
+        """קבלת המלצות מסחר לטווח בינוני"""
+        print("\n📈 מחפש הזדמנויות מסחר לטווח בינוני...")
+        
+        # מניות לדוגמה מה-SP500
+        stocks = ['NFLX', 'AAPL']  # נטפליקס ואפל לדוגמה
+        
+        recommendations = []
+        
+        for symbol in stocks:
+            try:
+                # קבלת נתונים היסטוריים
+                ticker = yf.Ticker(symbol)
+                df = ticker.history(period='3mo')  # 3 חודשים אחרונים
+                
+                if df.empty:
+                    continue
+                
+                current_price = df['Close'].iloc[-1]
+                
+                # חישוב תמיכה והתנגדות
+                support, resistance = self.calculate_support_resistance(df)
+                
+                # יצירת סיגנל מסחר
+                signal, entry_point, exit_point, risk_reward = self.generate_trading_signal(
+                    symbol, current_price, support, resistance
+                )
+                
+                recommendations.append({
+                    'symbol': symbol,
+                    'current_price': current_price,
+                    'support_level': support,
+                    'resistance_level': resistance,
+                    'signal_type': signal,
+                    'entry_point': entry_point,
+                    'exit_point': exit_point,
+                    'risk_reward_ratio': risk_reward
+                })
+                
+                # שמירה במסד הנתונים
+                self.save_trading_signal(
+                    symbol, current_price, support, resistance,
+                    signal, entry_point, exit_point, risk_reward
+                )
+                
+            except Exception as e:
+                print(f"⚠️ שגיאה בקבלת נתונים עבור {symbol}: {e}")
+        
+        return recommendations
+    
+    def save_long_term_recommendation(self, investment_amount, symbol, fund_name, 
+                                    current_price, recommended_shares, total_cost):
+        """שמירת המלצה לטווח ארוך במסד הנתונים"""
+        try:
+            conn = mysql.connector.connect(**self.db_config)
+            cursor = conn.cursor()
+            
+            query = """
+                INSERT INTO long_term_portfolio 
+                (date_created, investment_amount, symbol, fund_name, current_price, 
+                 recommended_shares, total_cost)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """
+            
+            values = (
+                datetime.now(), investment_amount, symbol, fund_name,
+                current_price, recommended_shares, total_cost
+            )
+            
+            cursor.execute(query, values)
+            conn.commit()
+            cursor.close()
+            conn.close()
+            
+        except mysql.connector.Error as e:
+            print(f"⚠️ שגיאה בשמירת נתונים לטווח ארוך: {e}")
+    
+    def save_trading_signal(self, symbol, current_price, support, resistance,
+                           signal, entry_point, exit_point, risk_reward):
+        """שמירת סיגנל מסחר במסד הנתונים"""
+        try:
+            conn = mysql.connector.connect(**self.db_config)
+            cursor = conn.cursor()
+            
+            query = """
+                INSERT INTO trading_signals 
+                (date_created, symbol, current_price, support_level, resistance_level,
+                 signal_type, entry_point, exit_point, risk_reward_ratio)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """
+            
+            values = (
+                datetime.now(), symbol, current_price, support, resistance,
+                signal, entry_point, exit_point, risk_reward
+            )
+            
+            cursor.execute(query, values)
+            conn.commit()
+            cursor.close()
+            conn.close()
+            
+        except mysql.connector.Error as e:
+            print(f"⚠️ שגיאה בשמירת סיגנל מסחר: {e}")
+    
+    # ========== API Methods for Flask Server ==========
+    
+    def get_long_term_api(self, investment_amount):
+        """API method - קבלת המלצות לטווח ארוך"""
+        recommendations = self.get_long_term_recommendations(investment_amount)
+        
+        # המרה לפורמט JSON נקי
+        api_recommendations = []
+        total_investment = 0
+        
+        for rec in recommendations:
+            api_rec = {
+                'symbol': rec['symbol'],
+                'name': rec['name'],
+                'currentPrice': round(rec['current_price'], 2),
+                'recommendedShares': rec['recommended_shares'],
+                'totalCost': round(rec['total_cost'], 2),
+                'allocation': 0.25  # 25% לכל קרן
+            }
+            api_recommendations.append(api_rec)
+            total_investment += rec['total_cost']
+        
+        return {
+            'success': True,
+            'data': {
+                'recommendations': api_recommendations,
+                'totalInvestment': round(total_investment, 2),
+                'investmentAmount': investment_amount,
+                'strategy': 'long_term_portfolio',
+                'timestamp': datetime.now().isoformat()
+            }
+        }
+    
+    def get_medium_term_api(self):
+        """API method - קבלת סיגנלי מסחר לטווח בינוני"""
+        recommendations = self.get_medium_term_recommendations()
+        
+        # המרה לפורמט JSON נקי
+        api_recommendations = []
+        
+        for rec in recommendations:
+            signal_interpretation = {
+                'BUY': 'קנייה מומלצת - קרוב לתמיכה',
+                'SELL': 'מכירה מומלצת - קרוב להתנגדות', 
+                'HOLD': 'המתנה - באמצע הטווח'
+            }
+            
+            api_rec = {
+                'symbol': rec['symbol'],
+                'currentPrice': round(rec['current_price'], 2),
+                'supportLevel': round(rec['support_level'], 2),
+                'resistanceLevel': round(rec['resistance_level'], 2),
+                'signalType': rec['signal_type'],
+                'signalDescription': signal_interpretation.get(rec['signal_type'], 'לא ידוע'),
+                'entryPoint': round(rec['entry_point'], 2),
+                'exitPoint': round(rec['exit_point'], 2),
+                'riskRewardRatio': round(rec['risk_reward_ratio'], 2),
+                'recommendation': rec['signal_type'],
+                'confidence': 'medium'  # רמת ביטחון בסיגנל
+            }
+            api_recommendations.append(api_rec)
+        
+        return {
+            'success': True,
+            'data': {
+                'signals': api_recommendations,
+                'strategy': 'medium_term_trading',
+                'timestamp': datetime.now().isoformat(),
+                'analysisNote': 'מבוסס על רמות תמיכה והתנגדות'
+            }
+        }
+    
+    def get_portfolio_history_api(self, days=30):
+        """API method - קבלת היסטוריית פורטפוליו"""
+        try:
+            conn = mysql.connector.connect(**self.db_config)
+            cursor = conn.cursor(dictionary=True)
+            
+            # שליפת נתוני פורטפוליו
+            cursor.execute("""
+                SELECT * FROM long_term_portfolio 
+                WHERE date_created >= DATE_SUB(NOW(), INTERVAL %s DAY)
+                ORDER BY date_created DESC
+            """, (days,))
+            
+            portfolio_history = cursor.fetchall()
+            
+            # שליפת סיגנלי מסחר
+            cursor.execute("""
+                SELECT * FROM trading_signals 
+                WHERE date_created >= DATE_SUB(NOW(), INTERVAL %s DAY)
+                ORDER BY date_created DESC
+            """, (days,))
+            
+            trading_history = cursor.fetchall()
+            
+            cursor.close()
+            conn.close()
+            
+            # המרה לפורמט JSON
+            for record in portfolio_history + trading_history:
+                if 'date_created' in record:
+                    record['date_created'] = record['date_created'].isoformat()
+            
+            return {
+                'success': True,
+                'data': {
+                    'portfolioHistory': portfolio_history,
+                    'tradingHistory': trading_history,
+                    'periodDays': days
+                }
+            }
+            
+        except mysql.connector.Error as e:
+            return {
+                'success': False,
+                'error': f'Database error: {str(e)}'
+            }
+    
+    def display_long_term_results(self, recommendations):
+        """הצגת תוצאות השקעה לטווח ארוך"""
+        print("\n" + "="*80)
+        print("🏛️  המלצות השקעה לטווח ארוך - קרנות סל")
+        print("="*80)
+        
+        if not recommendations:
+            print("❌ לא נמצאו המלצות")
+            return
+        
+        # הכנת נתונים לטבלה
+        table_data = []
+        total_investment = 0
+        
+        for rec in recommendations:
+            table_data.append([
+                rec['symbol'],
+                rec['name'][:30] + "..." if len(rec['name']) > 30 else rec['name'],
+                f"${rec['current_price']:.2f}",
+                rec['recommended_shares'],
+                f"${rec['total_cost']:.2f}"
+            ])
+            total_investment += rec['total_cost']
+        
+        # הוספת סיכום
+        table_data.append(['---', '---', '---', '---', '---'])
+        table_data.append(['סה"כ', 'השקעה מומלצת', '', '', f"${total_investment:.2f}"])
+        
+        headers = ['סמל', 'שם הקרן', 'מחיר נוכחי', 'יחידות מומלצות', 'עלות כוללת']
+        
+        print(tabulate(table_data, headers=headers, tablefmt='grid'))
+        
+        print(f"\n💡 הסבר: התיק מחולק באופן שווה בין 4 קרנות מובילות")
+        print(f"📊 סה"כ השקעה מומלצת: ${total_investment:.2f}")
+    
+    def display_medium_term_results(self, recommendations):
+        """הצגת תוצאות מסחר לטווח בינוני"""
+        print("\n" + "="*80)
+        print("⚡ המלצות מסחר לטווח בינוני - אנליזה טכנית")
+        print("="*80)
+        
+        if not recommendations:
+            print("❌ לא נמצאו המלצות")
+            return
+        
+        for rec in recommendations:
+            print(f"\n🏢 {rec['symbol']}")
+            print("-" * 40)
+            print(f"💰 מחיר נוכחי: ${rec['current_price']:.2f}")
+            print(f"📉 רמת תמיכה: ${rec['support_level']:.2f}")
+            print(f"📈 רמת התנגדות: ${rec['resistance_level']:.2f}")
+            print(f"🎯 סיגנל: {rec['signal_type']}")
+            print(f"🔵 נקודת כניסה: ${rec['entry_point']:.2f}")
+            print(f"🔴 נקודת יציאה: ${rec['exit_point']:.2f}")
+            print(f"⚖️ יחס סיכון-תשואה: {rec['risk_reward_ratio']:.2f}")
+            
+            # פירוש הסיגנל
+            if rec['signal_type'] == 'BUY':
+                print("✅ המלצה: קנייה - המניה קרובה לרמת תמיכה")
+            elif rec['signal_type'] == 'SELL':
+                print("🔻 המלצה: מכירה - המניה קרובה לרמת התנגדות")
+            else:
+                print("⏸️ המלצה: המתנה - המניה באמצע הטווח")
+
+
+def main():
+    """פונקציה ראשית"""
+    print("🚀 מערכת המלצות השקעות")
+    print("=" * 40)
+    
+    # יצירת מופע של המערכת
+    system = StockRecommendationSystem()
+    
+    while True:
+        print("\nבחר אופציה:")
+        print("1. המלצות השקעה לטווח ארוך")
+        print("2. המלצות מסחר לטווח בינוני")
+        print("3. שתי האפשרויות")
+        print("4. הפעלת שרת API")
+        print("5. יציאה")
+        
+        choice = input("\nהכנס בחירה (1-5): ").strip()
+        
+        if choice == '1':
+            try:
+                amount = float(input("הכנס סכום השקעה ($): "))
+                recommendations = system.get_long_term_recommendations(amount)
+                system.display_long_term_results(recommendations)
+            except ValueError:
+                print("❌ נא הכנס סכום תקין")
+        
+        elif choice == '2':
+            recommendations = system.get_medium_term_recommendations()
+            system.display_medium_term_results(recommendations)
+        
+        elif choice == '3':
+            try:
+                amount = float(input("הכנס סכום השקעה לטווח ארוך ($): "))
+                
+                # המלצות לטווח ארוך
+                long_term_recs = system.get_long_term_recommendations(amount)
+                system.display_long_term_results(long_term_recs)
+                
+                # המלצות לטווח בינוני
+                medium_term_recs = system.get_medium_term_recommendations()
+                system.display_medium_term_results(medium_term_recs)
+                
+            except ValueError:
+                print("❌ נא הכנס סכום תקין")
+        
+        elif choice == '4':
+            print("🌐 מתחיל שרת API...")
+            try:
+                port = input("הכנס פורט (ברירת מחדל: 5000): ").strip()
+                port = int(port) if port else 5000
+                
+                print("🔄 שרת API פועל... לחץ Ctrl+C לעצירה")
+                run_api_server(system, port=port)
+                
+            except KeyboardInterrupt:
+                print("\n🛑 שרת API הופסק")
+            except ValueError:
+                print("❌ פורט לא תקין")
+            except Exception as e:
+                print(f"❌ שגיאה בהפעלת השרת: {e}")
+        
+        elif choice == '5':
+            print("👋 תודה שהשתמשת במערכת!")
+            break
+        
+        else:
+            print("❌ בחירה לא תקינה")
+        
+        if choice != '4':  # לא להציג "לחץ Enter" אחרי הפעלת השרת
+            input("\nלחץ Enter להמשך...")
+
+
+if __name__ == "__main__":
+    main()
+
+
