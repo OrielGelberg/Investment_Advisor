@@ -192,6 +192,57 @@ class StockRecommendationAPI:
         self.app.run(host=host, port=port, debug=debug)
 
 
+=== API Endpoints for JavaScript Integration ===
+
+🌐 Base URL: http://localhost:5000
+
+📋 Available Endpoints:
+
+1. GET /api/health
+   - בדיקת תקינות השרת
+
+2. POST /api/recommendations/long-term
+   Body: {"investmentAmount": 10000}
+   - קבלת המלצות השקעה לטווח ארוך
+
+3. GET /api/recommendations/medium-term
+   - קבלת סיגנלי מסחר לטווח בינוני
+
+4. GET /api/portfolio/history?days=30
+   - קבלת היסטוריית פורטפוליו
+
+5. GET /api/stock/AAPL
+   - קבלת מידע על מניה ספציפית
+
+6. POST /api/recommendations/combined
+   Body: {"investmentAmount": 10000}
+   - קבלת המלצות משולבות (לטווח ארוך + בינוני)
+
+=== דוגמאות JavaScript ===
+
+// קבלת המלצות לטווח ארוך
+fetch('http://localhost:5000/api/recommendations/long-term', {
+    method: 'POST',
+    headers: {
+        'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({investmentAmount: 10000})
+})
+.then(response => response.json())
+.then(data => console.log(data));
+
+// קבלת סיגנלי מסחר
+fetch('http://localhost:5000/api/recommendations/medium-term')
+.then(response => response.json())
+.then(data => console.log(data));
+
+// קבלת מידע על מניה
+fetch('http://localhost:5000/api/stock/NFLX')
+.then(response => response.json())
+.then(data => console.log(data));
+
+
+
 def run_api_server(stock_system, host='localhost', port=5000):
     """הפעלת שרת API במקביל"""
     api = StockRecommendationAPI(stock_system)
